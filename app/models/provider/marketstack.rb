@@ -9,7 +9,8 @@ class Provider::Marketstack
     prices = paginate("#{base_url}/eod", {
       symbols: ticker,
       date_from: start_date.to_s,
-      date_to: end_date.to_s
+      date_to: end_date.to_s,
+      limit: 10000
     }) do |body|
       body.dig("data").map do |price|
         {

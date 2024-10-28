@@ -20,7 +20,7 @@ class Security < ApplicationRecord
 
     sanitized_query = ActiveRecord::Base.connection.quote(sanitized_query)
 
-    where("search_vector @@ to_tsquery('simple', #{sanitized_query}) AND exchange_mic IS NOT NULL")
+    where("search_vector @@ to_tsquery('simple', #{sanitized_query}) AND exchange_mic IS NOT NULL AND country_code = ?", Current.family.country)
       .select("securities.*, ts_rank_cd(search_vector, to_tsquery('simple', #{sanitized_query})) AS rank")
       .reorder("rank DESC")
   }
