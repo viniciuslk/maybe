@@ -4,7 +4,14 @@ import { Controller } from "@hotwired/stimulus";
 export default class extends Controller {
   static values = {
     linkToken: String,
+    region: { type: String, default: "us" },
+    isUpdate: { type: Boolean, default: false },
+    itemId: String,
   };
+
+  connect() {
+    this.open();
+  }
 
   open() {
     const handler = Plaid.create({
@@ -18,9 +25,24 @@ export default class extends Controller {
     handler.open();
   }
 
-  handleSuccess(public_token, metadata) {
-    window.location.href = "/accounts";
+  handleSuccess = (public_token, metadata) => {
+    if (this.isUpdateValue) {
+      // Trigger a sync to verify the connection and update status
+      fetch(`/plaid_items/${this.itemIdValue}/sync`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": document.querySelector('[name="csrf-token"]').content,
+        },
+      }).then(() => {
+        // Refresh the page to show the updated status
+        window.location.href = "/accounts";
+      });
+      return;
+    }
 
+    // For new connections, create a new Plaid item
     fetch("/plaid_items", {
       method: "POST",
       headers: {
@@ -31,6 +53,7 @@ export default class extends Controller {
         plaid_item: {
           public_token: public_token,
           metadata: metadata,
+          region: this.regionValue,
         },
       }),
     }).then((response) => {
@@ -38,17 +61,20 @@ export default class extends Controller {
         window.location.href = response.url;
       }
     });
-  }
+  };
 
-  handleExit(err, metadata) {
-    // no-op
-  }
+  handleExit = (err, metadata) => {
+    // If there was an error during update mode, refresh the page to show latest status
+    if (err && metadata.status === "requires_credentials") {
+      window.location.href = "/accounts";
+    }
+  };
 
-  handleEvent(eventName, metadata) {
+  handleEvent = (eventName, metadata) => {
     // no-op
-  }
+  };
 
-  handleLoad() {
+  handleLoad = () => {
     // no-op
-  }
+  };
 }

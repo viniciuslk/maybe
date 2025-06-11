@@ -1,6 +1,4 @@
 class TransfersController < ApplicationController
-  layout :with_sidebar
-
   before_action :set_transfer, only: %i[destroy show update]
 
   def new
@@ -39,8 +37,8 @@ class TransfersController < ApplicationController
 
   def update
     Transfer.transaction do
-      @transfer.update!(transfer_update_params.except(:category_id))
-      @transfer.outflow_transaction.update!(category_id: transfer_update_params[:category_id])
+      update_transfer_status
+      update_transfer_details unless transfer_update_params[:status] == "rejected"
     end
 
     respond_to do |format|
@@ -67,5 +65,18 @@ class TransfersController < ApplicationController
 
     def transfer_update_params
       params.require(:transfer).permit(:notes, :status, :category_id)
+    end
+
+    def update_transfer_status
+      if transfer_update_params[:status] == "rejected"
+        @transfer.reject!
+      elsif transfer_update_params[:status] == "confirmed"
+        @transfer.confirm!
+      end
+    end
+
+    def update_transfer_details
+      @transfer.outflow_transaction.update!(category_id: transfer_update_params[:category_id])
+      @transfer.update!(notes: transfer_update_params[:notes])
     end
 end

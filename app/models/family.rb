@@ -1,231 +1,109 @@
 class Family < ApplicationRecord
-  include Plaidable, Syncable
+  include PlaidConnectable, Syncable, AutoTransferMatchable, Subscribeable
 
-  DATE_FORMATS = [ "%m-%d-%Y", "%d.%m.%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%m/%d/%Y", "%e/%m/%Y", "%Y.%m.%d" ]
-
-  include Providable
+  DATE_FORMATS = [
+    [ "MM-DD-YYYY", "%m-%d-%Y" ],
+    [ "DD.MM.YYYY", "%d.%m.%Y" ],
+    [ "DD-MM-YYYY", "%d-%m-%Y" ],
+    [ "YYYY-MM-DD", "%Y-%m-%d" ],
+    [ "DD/MM/YYYY", "%d/%m/%Y" ],
+    [ "YYYY/MM/DD", "%Y/%m/%d" ],
+    [ "MM/DD/YYYY", "%m/%d/%Y" ],
+    [ "D/MM/YYYY", "%e/%m/%Y" ],
+    [ "YYYY.MM.DD", "%Y.%m.%d" ]
+  ].freeze
 
   has_many :users, dependent: :destroy
-  has_many :invitations, dependent: :destroy
-  has_many :tags, dependent: :destroy
   has_many :accounts, dependent: :destroy
+  has_many :invitations, dependent: :destroy
+
   has_many :imports, dependent: :destroy
-  has_many :transactions, through: :accounts
+
   has_many :entries, through: :accounts
-  has_many :categories, dependent: :destroy
-  has_many :merchants, dependent: :destroy
-  has_many :issues, through: :accounts
+  has_many :transactions, through: :accounts
+  has_many :rules, dependent: :destroy
+  has_many :trades, through: :accounts
   has_many :holdings, through: :accounts
-  has_many :plaid_items, dependent: :destroy
+
+  has_many :tags, dependent: :destroy
+  has_many :categories, dependent: :destroy
+  has_many :merchants, dependent: :destroy, class_name: "FamilyMerchant"
+
   has_many :budgets, dependent: :destroy
   has_many :budget_categories, through: :budgets
 
   validates :locale, inclusion: { in: I18n.available_locales.map(&:to_s) }
-  validates :date_format, inclusion: { in: DATE_FORMATS }
+  validates :date_format, inclusion: { in: DATE_FORMATS.map(&:last) }
 
-  def sync_data(start_date: nil)
-    update!(last_synced_at: Time.current)
-
-    accounts.manual.each do |account|
-      account.sync_data(start_date: start_date)
-    end
-
-    plaid_data = []
-
-    plaid_items.each do |plaid_item|
-      plaid_data << plaid_item.sync_data(start_date: start_date)
-    end
-
-    plaid_data
+  def assigned_merchants
+    merchant_ids = transactions.where.not(merchant_id: nil).pluck(:merchant_id).uniq
+    Merchant.where(id: merchant_ids)
   end
 
-  def post_sync
-    broadcast_refresh
+  def auto_categorize_transactions_later(transactions)
+    AutoCategorizeJob.perform_later(self, transaction_ids: transactions.pluck(:id))
   end
 
-  def syncing?
-    super || accounts.manual.any?(&:syncing?) || plaid_items.any?(&:syncing?)
+  def auto_categorize_transactions(transaction_ids)
+    AutoCategorizer.new(self, transaction_ids: transaction_ids).auto_categorize
   end
 
-  def get_link_token(webhooks_url:, redirect_url:, accountable_type: nil)
-    return nil unless plaid_provider
-
-    plaid_provider.get_link_token(
-      user_id: id,
-      webhooks_url: webhooks_url,
-      redirect_url: redirect_url,
-      accountable_type: accountable_type
-    ).link_token
+  def auto_detect_transaction_merchants_later(transactions)
+    AutoDetectMerchantsJob.perform_later(self, transaction_ids: transactions.pluck(:id))
   end
 
-  def income_categories_with_totals(date: Date.current)
-    categories_with_stats(classification: "income", date: date)
+  def auto_detect_transaction_merchants(transaction_ids)
+    AutoMerchantDetector.new(self, transaction_ids: transaction_ids).auto_detect
   end
 
-  def expense_categories_with_totals(date: Date.current)
-    categories_with_stats(classification: "expense", date: date)
+  def balance_sheet
+    @balance_sheet ||= BalanceSheet.new(self)
   end
 
-  def category_stats
-    CategoryStats.new(self)
+  def income_statement
+    @income_statement ||= IncomeStatement.new(self)
   end
 
-  def budgeting_stats
-    BudgetingStats.new(self)
+  def eu?
+    country != "US" && country != "CA"
   end
 
-  def snapshot(period = Period.all)
-    query = accounts.active.joins(:balances)
-              .where("account_balances.currency = ?", self.currency)
-              .select(
-                "account_balances.currency",
-                "account_balances.date",
-                "SUM(CASE WHEN accounts.classification = 'liability' THEN account_balances.balance ELSE 0 END) AS liabilities",
-                "SUM(CASE WHEN accounts.classification = 'asset' THEN account_balances.balance ELSE 0 END) AS assets",
-                "SUM(CASE WHEN accounts.classification = 'asset' THEN account_balances.balance WHEN accounts.classification = 'liability' THEN -account_balances.balance ELSE 0 END) AS net_worth",
-              )
-              .group("account_balances.date, account_balances.currency")
-              .order("account_balances.date")
+  def requires_data_provider?
+    # If family has any trades, they need a provider for historical prices
+    return true if trades.any?
 
-    query = query.where("account_balances.date >= ?", period.date_range.begin) if period.date_range.begin
-    query = query.where("account_balances.date <= ?", period.date_range.end) if period.date_range.end
-    result = query.to_a
+    # If family has any accounts not denominated in the family's currency, they need a provider for historical exchange rates
+    return true if accounts.where.not(currency: self.currency).any?
 
-    {
-      asset_series: TimeSeries.new(result.map { |r| { date: r.date, value: Money.new(r.assets, r.currency) } }),
-      liability_series: TimeSeries.new(result.map { |r| { date: r.date, value: Money.new(r.liabilities, r.currency) } }),
-      net_worth_series: TimeSeries.new(result.map { |r| { date: r.date, value: Money.new(r.net_worth, r.currency) } })
-    }
+    # If family has any entries in different currencies, they need a provider for historical exchange rates
+    uniq_currencies = entries.pluck(:currency).uniq
+    return true if uniq_currencies.count > 1
+    return true if uniq_currencies.count > 0 && uniq_currencies.first != self.currency
+
+    false
   end
 
-  def snapshot_account_transactions
-    period = Period.last_30_days
-    results = accounts.active
-                      .joins(:entries)
-                      .joins("LEFT JOIN transfers ON (transfers.inflow_transaction_id = account_entries.entryable_id OR transfers.outflow_transaction_id = account_entries.entryable_id)")
-                      .select(
-                        "accounts.*",
-                        "COALESCE(SUM(account_entries.amount) FILTER (WHERE account_entries.amount > 0), 0) AS spending",
-                        "COALESCE(SUM(-account_entries.amount) FILTER (WHERE account_entries.amount < 0), 0) AS income"
-                      )
-                      .where("account_entries.date >= ?", period.date_range.begin)
-                      .where("account_entries.date <= ?", period.date_range.end)
-                      .where("account_entries.entryable_type = 'Account::Transaction'")
-                      .where("transfers.id IS NULL")
-                      .group("accounts.id")
-                      .having("SUM(ABS(account_entries.amount)) > 0")
-                      .to_a
-
-    results.each do |r|
-      r.define_singleton_method(:savings_rate) do
-        (income - spending) / income
-      end
-    end
-
-    {
-      top_spenders: results.sort_by(&:spending).select { |a| a.spending > 0 }.reverse,
-      top_earners: results.sort_by(&:income).select { |a| a.income > 0 }.reverse,
-      top_savers: results.sort_by { |a| a.savings_rate }.reverse
-    }
-  end
-
-  def snapshot_transactions
-    candidate_entries = entries.account_transactions.incomes_and_expenses
-    rolling_totals = Account::Entry.daily_rolling_totals(candidate_entries, self.currency, period: Period.last_30_days)
-
-    spending = []
-    income = []
-    savings = []
-    rolling_totals.each do |r|
-      spending << {
-        date: r.date,
-        value: Money.new(r.rolling_spend, self.currency)
-      }
-
-      income << {
-        date: r.date,
-        value: Money.new(r.rolling_income, self.currency)
-      }
-
-      savings << {
-        date: r.date,
-        value: r.rolling_income != 0 ? ((r.rolling_income - r.rolling_spend) / r.rolling_income) : 0.to_d
-      }
-    end
-
-    {
-      income_series: TimeSeries.new(income, favorable_direction: "up"),
-      spending_series: TimeSeries.new(spending, favorable_direction: "down"),
-      savings_rate_series: TimeSeries.new(savings, favorable_direction: "up")
-    }
-  end
-
-  def net_worth
-    assets - liabilities
-  end
-
-  def assets
-    Money.new(accounts.active.assets.map { |account| account.balance_money.exchange_to(currency, fallback_rate: 0) }.sum, currency)
-  end
-
-  def liabilities
-    Money.new(accounts.active.liabilities.map { |account| account.balance_money.exchange_to(currency, fallback_rate: 0) }.sum, currency)
-  end
-
-  def synth_usage
-    self.class.synth_provider&.usage
-  end
-
-  def synth_overage?
-    self.class.synth_provider&.usage&.utilization.to_i >= 100
-  end
-
-  def synth_valid?
-    self.class.synth_provider&.healthy?
-  end
-
-  def subscribed?
-    stripe_subscription_status == "active"
-  end
-
-  def primary_user
-    users.order(:created_at).first
+  def missing_data_provider?
+    requires_data_provider? && Provider::Registry.get_provider(:synth).nil?
   end
 
   def oldest_entry_date
     entries.order(:date).first&.date || Date.current
   end
 
-  private
-    CategoriesWithTotals = Struct.new(:total_money, :category_totals, keyword_init: true)
-    CategoryWithStats = Struct.new(:category, :amount_money, :percentage, keyword_init: true)
+  def build_cache_key(key, invalidate_on_data_updates: false)
+    # Our data sync process updates this timestamp whenever any family account successfully completes a data update.
+    # By including it in the cache key, we can expire caches every time family account data changes.
+    data_invalidation_key = invalidate_on_data_updates ? latest_sync_completed_at : nil
 
-    def categories_with_stats(classification:, date: Date.current)
-      totals = category_stats.month_category_totals(date: date)
+    [
+      id,
+      key,
+      data_invalidation_key
+    ].compact.join("_")
+  end
 
-      classified_totals = totals.category_totals.select { |t| t.classification == classification }
-
-      if classification == "income"
-        total = totals.total_income
-        categories_scope = categories.incomes
-      else
-        total = totals.total_expense
-        categories_scope = categories.expenses
-      end
-
-      categories_with_uncategorized = categories_scope + [ categories_scope.uncategorized ]
-
-      CategoriesWithTotals.new(
-        total_money: Money.new(total, currency),
-        category_totals: categories_with_uncategorized.map do |category|
-          ct = classified_totals.find { |ct| ct.category_id == category&.id }
-
-          CategoryWithStats.new(
-            category: category,
-            amount_money: Money.new(ct&.amount || 0, currency),
-            percentage: ct&.percentage || 0
-          )
-        end
-      )
-    end
+  def self_hoster?
+    Rails.application.config.app_mode.self_hosted?
+  end
 end

@@ -4,9 +4,7 @@ module AccountableResourceInterfaceTest
   extend ActiveSupport::Testing::Declarative
 
   test "shows new form" do
-    Plaid::PlaidApi.any_instance.stubs(:link_token_create).returns(
-      Plaid::LinkTokenCreateResponse.new(link_token: "test-link-token")
-    )
+    Family.any_instance.stubs(:get_link_token).returns("test-link-token")
 
     get new_polymorphic_url(@account.accountable)
     assert_response :success
@@ -62,7 +60,7 @@ module AccountableResourceInterfaceTest
   end
 
   test "updates account balance by creating new valuation if balance has changed" do
-    assert_difference [ "Account::Entry.count", "Account::Valuation.count" ], 1 do
+    assert_difference [ "Entry.count", "Valuation.count" ], 1 do
       patch account_url(@account), params: {
         account: {
           balance: 12000
@@ -76,9 +74,9 @@ module AccountableResourceInterfaceTest
   end
 
   test "updates account balance by editing existing valuation for today" do
-    @account.entries.create! date: Date.current, amount: 6000, currency: "USD", name: "Balance update", entryable: Account::Valuation.new
+    @account.entries.create! date: Date.current, amount: 6000, currency: "USD", name: "Balance update", entryable: Valuation.new
 
-    assert_no_difference [ "Account::Entry.count", "Account::Valuation.count" ] do
+    assert_no_difference [ "Entry.count", "Valuation.count" ] do
       patch account_url(@account), params: {
         account: {
           balance: 12000

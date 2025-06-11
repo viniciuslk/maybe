@@ -1,31 +1,32 @@
-<%= drawer do %>
-  <header class="mb-4 space-y-1">
-    <div class="flex items-center gap-4">
-      <h3 class="font-medium">
-        <span class="text-2xl">
-          <%= format_money @transfer.amount_abs %>
-        </span>
+<%= render DialogComponent.new(variant: "drawer") do |dialog| %>
+  <% dialog.with_header do %>
+    <div class="space-y-1">
+      <div class="flex items-center gap-4">
+        <h3 class="font-medium">
+          <span class="text-2xl">
+            <%= format_money @transfer.amount_abs %>
+          </span>
 
-        <span class="text-lg text-gray-500">
-          <%= @transfer.amount_abs.currency.iso_code %>
-        </span>
-      </h3>
+          <span class="text-lg text-secondary">
+            <%= @transfer.amount_abs.currency.iso_code %>
+          </span>
+        </h3>
 
-      <%= lucide_icon "arrow-left-right", class: "text-gray-500 mt-1 w-5 h-5" %>
+        <%= icon "arrow-left-right", size: "sm" %>
+      </div>
+
+      <span class="text-sm text-secondary">
+        <%= @transfer.name %>
+      </span>
     </div>
+  <% end %>
 
-    <span class="text-sm text-gray-500">
-      <%= @transfer.name %>
-    </span>
-  </header>
-
-  <div class="space-y-2">
-    <!-- Overview Section -->
-    <%= disclosure t(".overview") do %>
-      <div class="pb-4 px-3 pt-2 text-sm space-y-3 text-gray-900">
+  <% dialog.with_body do %>
+    <% dialog.with_section(title: t(".overview"), open: true) do %>
+      <div class="pb-4 px-3 pt-2 text-sm space-y-3 text-primary">
         <div class="space-y-3">
           <dl class="flex items-center gap-2 justify-between">
-            <dt class="text-gray-500">From</dt>
+            <dt class="text-secondary">From</dt>
             <dd class="flex items-center gap-2 font-medium">
               <%= render "accounts/logo", account: @transfer.from_account, size: "sm" %>
               <%= link_to @transfer.from_account.name, account_path(@transfer.from_account), data: { turbo_frame: "_top" } %>
@@ -33,21 +34,21 @@
           </dl>
 
           <dl class="flex items-center gap-2 justify-between">
-            <dt class="text-gray-500">Date</dt>
+            <dt class="text-secondary">Date</dt>
             <dd class="font-medium"><%= l(@transfer.outflow_transaction.entry.date, format: :long) %></dd>
           </dl>
 
           <dl class="flex items-center gap-2 justify-between">
-            <dt class="text-gray-500">Amount</dt>
-            <dd class="font-medium text-red-500"><%= format_money -@transfer.amount_abs %></dd>
+            <dt class="text-secondary">Amount</dt>
+            <dd class="font-medium text-red-500"><%= format_money @transfer.outflow_transaction.entry.amount_money * -1 %></dd>
           </dl>
         </div>
 
-        <div class="bg-alpha-black-100 h-px my-2"></div>
+        <%= render "shared/ruler", classes: "my-2" %>
 
         <div class="space-y-3">
           <dl class="flex items-center gap-2 justify-between">
-            <dt class="text-gray-500">To</dt>
+            <dt class="text-secondary">To</dt>
             <dd class="flex items-center gap-2 font-medium">
               <%= render "accounts/logo", account: @transfer.to_account, size: "sm" %>
               <%= link_to @transfer.to_account.name, account_path(@transfer.to_account), data: { turbo_frame: "_top" } %>
@@ -55,20 +56,19 @@
           </dl>
 
           <dl class="flex items-center gap-2 justify-between">
-            <dt class="text-gray-500">Date</dt>
+            <dt class="text-secondary">Date</dt>
             <dd class="font-medium"><%= l(@transfer.inflow_transaction.entry.date, format: :long) %></dd>
           </dl>
 
           <dl class="flex items-center gap-2 justify-between">
-            <dt class="text-gray-500">Amount</dt>
-            <dd class="font-medium text-green-500">+<%= format_money @transfer.amount_abs %></dd>
+            <dt class="text-secondary">Amount</dt>
+            <dd class="font-medium text-green-500">+<%= format_money @transfer.inflow_transaction.entry.amount_money * -1 %></dd>
           </dl>
         </div>
       </div>
     <% end %>
 
-    <!-- Details Section -->
-    <%= disclosure t(".details") do %>
+    <% dialog.with_section(title: t(".details")) do %>
       <%= styled_form_with model: @transfer,
               data: { controller: "auto-submit-form" }, class: "space-y-2" do |f| %>
         <% if @transfer.categorizable? %>
@@ -83,23 +83,22 @@
       <% end %>
     <% end %>
 
-    <!-- Settings Section -->
-    <%= disclosure t(".settings") do %>
+    <% dialog.with_section(title: t(".settings")) do %>
       <div class="pb-4">
         <div class="flex items-center justify-between gap-2 p-3">
           <div class="text-sm space-y-1">
-            <h4 class="text-gray-900"><%= t(".delete_title") %></h4>
-            <p class="text-gray-500"><%= t(".delete_subtitle") %></p>
+            <h4 class="text-primary"><%= t(".delete_title") %></h4>
+            <p class="text-secondary"><%= t(".delete_subtitle") %></p>
           </div>
 
           <%= button_to t(".delete"),
                 transfer_path(@transfer),
                 method: :delete,
                 class:  "rounded-lg px-3 py-2 whitespace-nowrap text-red-500 text-sm
-                          font-medium border border-alpha-black-200",
+                          font-medium border border-secondary",
                 data:   { turbo_confirm: true, turbo_frame: "_top" } %>
         </div>
       </div>
     <% end %>
-  </div>
+  <% end %>
 <% end %>

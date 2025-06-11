@@ -25,9 +25,40 @@ class TransfersControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "can destroy transfer" do
-    assert_difference -> { Transfer.count } => -1, -> { Account::Transaction.count } => 0 do
+  test "soft deletes transfer" do
+    assert_difference -> { Transfer.count }, -1 do
       delete transfer_url(transfers(:one))
+    end
+  end
+
+  test "can add notes to transfer" do
+    transfer = transfers(:one)
+    assert_nil transfer.notes
+
+    patch transfer_url(transfer), params: { transfer: { notes: "Test notes" } }
+
+    assert_redirected_to transactions_url
+    assert_equal "Transfer updated", flash[:notice]
+    assert_equal "Test notes", transfer.reload.notes
+  end
+
+  test "handles rejection without FrozenError" do
+    transfer = transfers(:one)
+
+    assert_difference "Transfer.count", -1 do
+      patch transfer_url(transfer), params: {
+        transfer: {
+          status: "rejected"
+        }
+      }
+    end
+
+    assert_redirected_to transactions_url
+    assert_equal "Transfer updated", flash[:notice]
+
+    # Verify the transfer was actually destroyed
+    assert_raises(ActiveRecord::RecordNotFound) do
+      transfer.reload
     end
   end
 end

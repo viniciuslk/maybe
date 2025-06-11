@@ -2,9 +2,10 @@ module AccountableResource
   extend ActiveSupport::Concern
 
   included do
-    layout :with_sidebar
+    include ScrollFocusable, Periodable
+
     before_action :set_account, only: [ :show, :edit, :update, :destroy ]
-    before_action :set_link_token, only: :new
+    before_action :set_link_options, only: :new
   end
 
   class_methods do
@@ -22,6 +23,13 @@ module AccountableResource
   end
 
   def show
+    @chart_view = params[:chart_view] || "balance"
+    @q = params.fetch(:q, {}).permit(:search)
+    entries = @account.entries.search(@q).reverse_chronological
+
+    set_focused_record(entries, params[:focused_record_id])
+
+    @pagy, @entries = pagy(entries, limit: params[:per_page] || "10", params: ->(params) { params.except(:focused_record_id) })
   end
 
   def edit
@@ -29,33 +37,31 @@ module AccountableResource
 
   def create
     @account = Current.family.accounts.create_and_sync(account_params.except(:return_to))
+    @account.lock_saved_attributes!
+
     redirect_to account_params[:return_to].presence || @account, notice: t("accounts.create.success", type: accountable_type.name.underscore.humanize)
   end
 
   def update
     @account.update_with_sync!(account_params.except(:return_to))
+    @account.lock_saved_attributes!
+
     redirect_back_or_to @account, notice: t("accounts.update.success", type: accountable_type.name.underscore.humanize)
   end
 
   def destroy
-    @account.destroy_later
-    redirect_to accounts_path, notice: t("accounts.destroy.success", type: accountable_type.name.underscore.humanize)
+    if @account.linked?
+      redirect_to account_path(@account), alert: "Cannot delete a linked account"
+    else
+      @account.destroy_later
+      redirect_to accounts_path, notice: t("accounts.destroy.success", type: accountable_type.name.underscore.humanize)
+    end
   end
 
   private
-    def set_link_token
-      @link_token = Current.family.get_link_token(
-        webhooks_url: webhooks_url,
-        redirect_url: accounts_url,
-        accountable_type: accountable_type.name
-      )
-    end
-
-    def webhooks_url
-      return webhooks_plaid_url if Rails.env.production?
-
-      base_url = ENV.fetch("DEV_WEBHOOKS_URL", root_url.chomp("/"))
-      base_url + "/webhooks/plaid"
+    def set_link_options
+      @show_us_link = Current.family.can_connect_plaid_us?
+      @show_eu_link = Current.family.can_connect_plaid_eu?
     end
 
     def accountable_type

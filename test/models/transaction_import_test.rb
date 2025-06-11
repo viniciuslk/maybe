@@ -28,14 +28,19 @@ class TransactionImportTest < ActiveSupport::TestCase
   end
 
   test "imports transactions, categories, tags, and accounts" do
-    import = <<-CSV
+    import = <<~CSV
       date,name,amount,category,tags,account,notes
       01/01/2024,Txn1,100,TestCategory1,TestTag1,TestAccount1,notes1
       01/02/2024,Txn2,200,TestCategory2,TestTag1|TestTag2,TestAccount2,notes2
       01/03/2024,Txn3,300,,,,notes3
     CSV
 
-    @import.update!(raw_file_str: import)
+    @import.update!(
+      raw_file_str: import,
+      date_col_label: "date",
+      amount_col_label: "amount",
+      date_format: "%m/%d/%Y"
+    )
 
     @import.generate_rows_from_csv
 
@@ -53,8 +58,8 @@ class TransactionImportTest < ActiveSupport::TestCase
 
     @import.reload
 
-    assert_difference -> { Account::Entry.count } => 3,
-                      -> { Account::Transaction.count } => 3,
+    assert_difference -> { Entry.count } => 3,
+                      -> { Transaction.count } => 3,
                       -> { Tag.count } => 1,
                       -> { Category.count } => 1,
                       -> { Account.count } => 1 do
@@ -62,5 +67,37 @@ class TransactionImportTest < ActiveSupport::TestCase
     end
 
     assert_equal "complete", @import.status
+  end
+
+  test "imports transactions with separate type column for signage convention" do
+    import = <<~CSV
+      date,amount,amount_type
+      01/01/2024,100,debit
+      01/02/2024,200,credit
+      01/03/2024,300,debit
+    CSV
+
+    @import.update!(
+      account: accounts(:depository),
+      raw_file_str: import,
+      date_col_label: "date",
+      date_format: "%m/%d/%Y",
+      amount_col_label: "amount",
+      entity_type_col_label: "amount_type",
+      amount_type_inflow_value: "debit",
+      amount_type_strategy: "custom_column",
+      signage_convention: nil # Explicitly set to nil to prove this is not needed
+    )
+
+    @import.generate_rows_from_csv
+
+    @import.reload
+
+    assert_difference -> { Entry.count } => 3,
+                      -> { Transaction.count } => 3 do
+      @import.publish
+    end
+
+    assert_equal [ -100, 200, -300 ], @import.entries.map(&:amount)
   end
 end

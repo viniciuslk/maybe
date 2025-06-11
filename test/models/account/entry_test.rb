@@ -1,10 +1,10 @@
 require "test_helper"
 
-class Account::EntryTest < ActiveSupport::TestCase
-  include Account::EntriesTestHelper
+class EntryTest < ActiveSupport::TestCase
+  include EntriesTestHelper
 
   setup do
-    @entry = account_entries :transaction
+    @entry = entries :transaction
   end
 
   test "entry cannot be older than 10 years ago" do
@@ -14,10 +14,10 @@ class Account::EntryTest < ActiveSupport::TestCase
   end
 
   test "valuations cannot have more than one entry per day" do
-    existing_valuation = account_entries :valuation
+    existing_valuation = entries :valuation
 
-    new_valuation = Account::Entry.new \
-      entryable: Account::Valuation.new,
+    new_valuation = Entry.new \
+      entryable: Valuation.new,
       account: existing_valuation.account,
       date: existing_valuation.date, # invalid
       currency: existing_valuation.currency,
@@ -30,7 +30,7 @@ class Account::EntryTest < ActiveSupport::TestCase
     prior_date = @entry.date - 1
     @entry.update! date: prior_date
 
-    @entry.account.expects(:sync_later).with(start_date: prior_date)
+    @entry.account.expects(:sync_later).with(window_start_date: prior_date)
     @entry.sync_account_later
   end
 
@@ -38,14 +38,14 @@ class Account::EntryTest < ActiveSupport::TestCase
     prior_date = @entry.date
     @entry.update! date: @entry.date + 1
 
-    @entry.account.expects(:sync_later).with(start_date: prior_date)
+    @entry.account.expects(:sync_later).with(window_start_date: prior_date)
     @entry.sync_account_later
   end
 
   test "triggers sync with correct start date when transaction deleted" do
     @entry.destroy!
 
-    @entry.account.expects(:sync_later).with(start_date: nil)
+    @entry.account.expects(:sync_later).with(window_start_date: nil)
     @entry.sync_account_later
   end
 
@@ -67,23 +67,21 @@ class Account::EntryTest < ActiveSupport::TestCase
     assert_equal 0, family.entries.search(params).size
   end
 
-  test "can calculate total spending for a group of transactions" do
-    family = families(:empty)
-    account = family.accounts.create! name: "Test", balance: 0, currency: "USD", accountable: Depository.new
-    create_transaction(account: account, amount: 100)
-    create_transaction(account: account, amount: 100)
-    create_transaction(account: account, amount: -500) # income, will be ignored
+  test "active scope only returns entries from active accounts" do
+    # Create transactions for all account types
+    active_transaction = create_transaction(account: accounts(:depository), name: "Active transaction")
+    inactive_transaction = create_transaction(account: accounts(:credit_card), name: "Inactive transaction")
 
-    assert_equal Money.new(200), family.entries.expense_total("USD")
-  end
+    # Update account statuses
+    accounts(:credit_card).update!(is_active: false)
 
-  test "can calculate total income for a group of transactions" do
-    family = families(:empty)
-    account = family.accounts.create! name: "Test", balance: 0, currency: "USD", accountable: Depository.new
-    create_transaction(account: account, amount: -100)
-    create_transaction(account: account, amount: -100)
-    create_transaction(account: account, amount: 500) # income, will be ignored
+    # Test the scope
+    active_entries = Entry.active
 
-    assert_equal Money.new(-200), family.entries.income_total("USD")
+    # Should include entry from active account
+    assert_includes active_entries, active_transaction
+
+    # Should not include entry from inactive account
+    assert_not_includes active_entries, inactive_transaction
   end
 end

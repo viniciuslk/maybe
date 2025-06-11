@@ -50,7 +50,7 @@ class AccountsTest < ApplicationSystemTestCase
   test "can create credit card account" do
     assert_account_created "CreditCard" do
       fill_in "Available credit", with: 1000
-      fill_in "Minimum payment", with: 25
+      fill_in "account[accountable_attributes][minimum_payment]", with: 25.51
       fill_in "APR", with: 15.25
       fill_in "Expiration date", with: 1.year.from_now.to_date
       fill_in "Annual fee", with: 100
@@ -59,6 +59,7 @@ class AccountsTest < ApplicationSystemTestCase
 
   test "can create loan account" do
     assert_account_created "Loan" do
+      fill_in "account[accountable_attributes][initial_balance]", with: 1000
       fill_in "Interest rate", with: 5.25
       select "Fixed", from: "Rate type"
       fill_in "Term (months)", with: 360
@@ -69,19 +70,17 @@ class AccountsTest < ApplicationSystemTestCase
     assert_account_created("OtherLiability")
   end
 
-  test "can sync all accounts on accounts page" do
-    visit accounts_url
-    assert_button "Sync all"
-  end
-
   private
 
     def open_new_account_modal
-      click_link "sidebar-new-account"
+      within "[data-controller='tabs']" do
+        click_button "All"
+        click_link "New account"
+      end
     end
 
     def assert_account_created(accountable_type, &block)
-      click_link humanized_accountable(accountable_type)
+      click_link Accountable.from_type(accountable_type).display_name.singularize
       click_link "Enter account balance" if accountable_type.in?(%w[Depository Investment Crypto Loan CreditCard])
 
       account_name = "[system test] #{accountable_type} Account"
@@ -93,8 +92,11 @@ class AccountsTest < ApplicationSystemTestCase
 
       click_button "Create Account"
 
-      find("details", text: humanized_accountable(accountable_type)).click
-      assert_text account_name
+      within_testid("account-sidebar-tabs") do
+        click_on "All"
+        find("details", text: Accountable.from_type(accountable_type).display_name).click
+        assert_text account_name
+      end
 
       visit accounts_url
       assert_text account_name
@@ -103,8 +105,8 @@ class AccountsTest < ApplicationSystemTestCase
 
       visit account_url(created_account)
 
-      within "header" do
-        find('button[data-menu-target="button"]').click
+      within_testid("account-menu") do
+        find("button").click
         click_on "Edit"
       end
 
@@ -114,6 +116,6 @@ class AccountsTest < ApplicationSystemTestCase
     end
 
     def humanized_accountable(accountable_type)
-      accountable_type.constantize.model_name.human
+      Accountable.from_type(accountable_type).display_name.singularize
     end
 end

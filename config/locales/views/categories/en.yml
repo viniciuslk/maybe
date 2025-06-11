@@ -15,10 +15,10 @@ en:
     form:
       placeholder: Category name
     index:
+      bootstrap: Use defaults (recommended)
       categories: Categories
-      bootstrap: Use default categories
-      categories_incomes: Income categories
       categories_expenses: Expense categories
+      categories_incomes: Income categories
       empty: No categories found
       new: New category
     menu:

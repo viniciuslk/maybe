@@ -1,26 +1,12 @@
 class AccountsController < ApplicationController
-  layout :with_sidebar
-
-  before_action :set_account, only: %i[sync]
+  before_action :set_account, only: %i[sync chart sparkline]
+  include Periodable
 
   def index
-    @manual_accounts = Current.family.accounts.manual.alphabetically
-    @plaid_items = Current.family.plaid_items.ordered
-  end
+    @manual_accounts = family.accounts.manual.alphabetically
+    @plaid_items = family.plaid_items.ordered
 
-  def summary
-    @period = Period.from_param(params[:period])
-    snapshot = Current.family.snapshot(@period)
-    @net_worth_series = snapshot[:net_worth_series]
-    @asset_series = snapshot[:asset_series]
-    @liability_series = snapshot[:liability_series]
-    @accounts = Current.family.accounts.active
-    @account_groups = @accounts.by_group(period: @period, currency: Current.family.currency)
-  end
-
-  def list
-    @period = Period.from_param(params[:period])
-    render layout: false
+    render layout: "settings"
   end
 
   def sync
@@ -32,20 +18,27 @@ class AccountsController < ApplicationController
   end
 
   def chart
-    @account = Current.family.accounts.find(params[:id])
+    @chart_view = params[:chart_view] || "balance"
     render layout: "application"
   end
 
-  def sync_all
-    unless Current.family.syncing?
-      Current.family.sync_later
-    end
+  def sparkline
+    etag_key = @account.family.build_cache_key("#{@account.id}_sparkline", invalidate_on_data_updates: true)
 
-    redirect_to accounts_path
+    # Short-circuit with 304 Not Modified when the client already has the latest version.
+    # We defer the expensive series computation until we know the content is stale.
+    if stale?(etag: etag_key, last_modified: @account.family.latest_sync_completed_at)
+      @sparkline_series = @account.sparkline_series
+      render layout: false
+    end
   end
 
   private
+    def family
+      Current.family
+    end
+
     def set_account
-      @account = Current.family.accounts.find(params[:id])
+      @account = family.accounts.find(params[:id])
     end
 end
