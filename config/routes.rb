@@ -2,6 +2,7 @@ require "sidekiq/web"
 require "sidekiq/cron/web"
 
 Rails.application.routes.draw do
+  use_doorkeeper
   # MFA routes
   resource :mfa, controller: "mfa", only: [ :new, :create ] do
     get :verify
@@ -20,6 +21,12 @@ Rails.application.routes.draw do
 
     member do
       post :retry
+    end
+  end
+
+  resources :family_exports, only: %i[new create index] do
+    member do
+      get :download
     end
   end
 
@@ -55,6 +62,7 @@ Rails.application.routes.draw do
     end
     resource :billing, only: :show
     resource :security, only: :show
+    resource :api_key, only: [ :show, :new, :create, :destroy ]
   end
 
   resource :subscription, only: %i[new show create] do
@@ -106,17 +114,12 @@ Rails.application.routes.draw do
     resources :mappings, only: :update, module: :import
   end
 
-  resources :accounts, only: %i[index new], shallow: true do
-    member do
-      post :sync
-      get :chart
-      get :sparkline
-    end
-  end
-
   resources :holdings, only: %i[index new show destroy]
   resources :trades, only: %i[show new create update destroy]
-  resources :valuations, only: %i[show new create update destroy]
+  resources :valuations, only: %i[show new create update destroy] do
+    post :confirm_create, on: :collection
+    post :confirm_update, on: :member
+  end
 
   namespace :transactions do
     resource :bulk_deletion, only: :create
@@ -153,24 +156,41 @@ Rails.application.routes.draw do
     end
   end
 
+  resources :accounts, only: %i[index new show destroy], shallow: true do
+    member do
+      post :sync
+      get :sparkline
+      patch :toggle_active
+    end
+
+    collection do
+      post :sync_all
+    end
+  end
+
   # Convenience routes for polymorphic paths
   # Example: account_path(Account.new(accountable: Depository.new)) => /depositories/123
-  direct :account do |model, options|
-    route_for model.accountable_name, model, options
-  end
   direct :edit_account do |model, options|
     route_for "edit_#{model.accountable_name}", model, options
   end
 
-  resources :depositories, except: :index
-  resources :investments, except: :index
-  resources :properties, except: :index
-  resources :vehicles, except: :index
-  resources :credit_cards, except: :index
-  resources :loans, except: :index
-  resources :cryptos, except: :index
-  resources :other_assets, except: :index
-  resources :other_liabilities, except: :index
+  resources :depositories, only: %i[new create edit update]
+  resources :investments, only: %i[new create edit update]
+  resources :properties, only: %i[new create edit update] do
+    member do
+      get :balances
+      patch :update_balances
+
+      get :address
+      patch :update_address
+    end
+  end
+  resources :vehicles, only: %i[new create edit update]
+  resources :credit_cards, only: %i[new create edit update]
+  resources :loans, only: %i[new create edit update]
+  resources :cryptos, only: %i[new create edit update]
+  resources :other_assets, only: %i[new create edit update]
+  resources :other_liabilities, only: %i[new create edit update]
 
   resources :securities, only: :index
 
@@ -179,6 +199,38 @@ Rails.application.routes.draw do
   resources :invitations, only: [ :new, :create, :destroy ] do
     get :accept, on: :member
   end
+
+  # API routes
+  namespace :api do
+    namespace :v1 do
+      # Authentication endpoints
+      post "auth/signup", to: "auth#signup"
+      post "auth/login", to: "auth#login"
+      post "auth/refresh", to: "auth#refresh"
+
+      # Production API endpoints
+      resources :accounts, only: [ :index ]
+      resources :transactions, only: [ :index, :show, :create, :update, :destroy ]
+      resource :usage, only: [ :show ], controller: "usage"
+
+      resources :chats, only: [ :index, :show, :create, :update, :destroy ] do
+        resources :messages, only: [ :create ] do
+          post :retry, on: :collection
+        end
+      end
+
+      # Test routes for API controller testing (only available in test environment)
+      if Rails.env.test?
+        get "test", to: "test#index"
+        get "test_not_found", to: "test#not_found"
+        get "test_family_access", to: "test#family_access"
+        get "test_scope_required", to: "test#scope_required"
+        get "test_multiple_scopes_required", to: "test#multiple_scopes_required"
+      end
+    end
+  end
+
+
 
   resources :currencies, only: %i[show]
 

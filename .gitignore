@@ -94,8 +94,11 @@ node_modules/
 *.roo*
 # OS specific
 # Task files
+.taskmaster/
 tasks.json
-tasks/ 
+.taskmaster/tasks/
+.taskmaster/reports/
+.taskmaster/state.json
 *.mcp.json
 scripts/
 .cursor/mcp.json
